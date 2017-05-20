@@ -1,0 +1,10 @@
+[config]
+verbosity = "debug"
+
+[[backup]]
+path = "/home/mike/dev/rust/backontime/"
+name = "backontime"
+recursive = true
+changes = 100
+timer = 30
+exec = "rdiff-backup {{path}} /home/mike/backup/{{name}}"
