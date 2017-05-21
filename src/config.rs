@@ -4,13 +4,13 @@ use std::path::Path;
 use std::fs::File;
 use std::io::Read;
 use log::LogLevel;
+use global::GLOBAL;
 
 use backup_entity::BackupEntity;
 
 #[derive(Debug)]
 pub struct Config {
-    backups: Vec<BackupEntity>,
-    verbosity: LogLevel,
+    pub backups: Vec<BackupEntity>,
 }
 
 impl Config {
@@ -26,6 +26,7 @@ impl Config {
 
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 #[serde(rename = "config")]
 struct ConfigModel {
     #[serde(rename = "backup")]
@@ -47,7 +48,8 @@ impl ConfigModel {
             None => LogLevel::Info
         };
 
-        setup_logger(verbosity);
+        GLOBAL.lock().unwrap()
+              .setup_logger(verbosity);
 
         let mut backups = Vec::new();
         for mut backup_model in self.backups {
@@ -56,8 +58,7 @@ impl ConfigModel {
         }
 
         Ok(Config {
-            backups,
-            verbosity
+            backups
         })
     }
 }
@@ -69,21 +70,30 @@ struct BackupModel {
     path: PathBuf,
     name: Option<String>,
     recursive: Option<bool>,
-    changes: Option<u32>,
-    timer: Option<u32>,
+    changes: Option<u64>,
+    timer: Option<u64>,
     exec: String,
 }
 
 impl Into<BackupEntity> for BackupModel {
     fn into(self) -> BackupEntity {
-        BackupEntity {
+        let entity = BackupEntity {
             path: self.path,
             recursive: self.recursive.unwrap(),
-            changes: self.changes.unwrap_or(0),
-            timer: self.timer.unwrap_or(0),
+            trigger_changes: self.changes.unwrap_or(0),
+            trigger_timer: self.timer.unwrap_or(0),
             exec: self.exec,
             ..Default::default()
-        }
+        };
+
+        info!("Registered entity:");
+        info!("path:      {:?}", entity.path.display());
+        info!("recursive: {}", entity.recursive);
+        info!("changes:   {}", entity.trigger_changes);
+        info!("timer:     every {} minute", entity.trigger_timer);
+        info!("exec:      {}", entity.exec);
+        
+        entity
     }
 }
 
@@ -108,7 +118,7 @@ impl BackupModel {
           
         self.name = Some(last_component.as_ref()
             .to_str()
-            .ok_or(ErrorKind::PathParseError(self.path.clone()))?
+            .ok_or_else(|| ErrorKind::PathParseError(self.path.clone()))?
             .to_owned());
         
         Ok(())
@@ -173,20 +183,4 @@ error_chain! {
 }
 
 
-use std::env;
-use log::LogRecord;
-use env_logger::LogBuilder;
-
-fn setup_logger(level: LogLevel) {
-    let format = |record: &LogRecord| format!("{}: {}\t\t\t", record.level(), record.args());
-
-    let mut builder = LogBuilder::new();
-    builder.format(format).filter(Some("backontime"), level.to_log_level_filter());
-
-    if let Ok(value) = env::var("RUST_LOG") {
-        builder.parse(&value);
-    }
-
-    builder.init().unwrap();
-}
 
