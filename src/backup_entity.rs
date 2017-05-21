@@ -24,7 +24,7 @@ impl Default for BackupEntity {
             recursive: false,
             trigger_changes: 0,
             trigger_timer: 0,
-            exec: String::from("/bin/true"),
+            exec: String::from(""),
             last_triggered: UNIX_EPOCH,
             changed: 0,
         }
@@ -35,16 +35,21 @@ impl BackupEntity {
     pub fn backup(&mut self) -> Result<()> {
         info!("starting backup on {:?}", self.path.display());
         
-        let child = Command::new("bash")
-                            .arg("-c")
+        let (shell, shell_exec_arg) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("bash", "-c")
+        };
+
+        let child = Command::new(shell)
+                            .arg(shell_exec_arg)
                             .arg(&self.exec)
                             .stdout(Stdio::piped())
                             .stderr(Stdio::piped())
                             .spawn()
-                            .expect("failed to execute command");
+                            .map_err(|err| ErrorKind::ExecError(self.exec.clone(), err))?;
 
-        let output = child.wait_with_output()
-                            .expect("failed to join child process");
+        let output = child.wait_with_output()?;
 
         let log_level = GLOBAL.lock().unwrap().log_level;
         
@@ -53,9 +58,9 @@ impl BackupEntity {
 
         GLOBAL.lock().unwrap().exec(|| {
             if output.status.success() {
-                info!("\"bash -c {:?}\" finished successfully", self.exec)
+                info!("\"{:?}\" finished successfully", self.exec)
             } else {
-                error!("\"bash -c {:?}\" failed: {}", self.exec, output.status)
+                error!("\"{:?}\" failed: {}", self.exec, output.status)
             }
 
             let mut stderr = stderr();
@@ -93,5 +98,12 @@ error_chain! {
     foreign_links {
         Io(::std::io::Error);
         Notify(::notify::Error);
+    }
+
+    errors {
+        ExecError(desc: String, err: ::std::io::Error) {
+            description("failed to execute command")
+            display("failed to execute command {:?}: {}", desc, err)
+        }
     }
 }
